@@ -134,6 +134,7 @@ def generateWordArray(path, vocabmap):
 
 def generateWordIndexList(path, vocabmap):
 	#generate a list of indices on vocabmap of the words contained in the email.
+	#basically this is just like getting the indices of the true values of the output of generateWordArray()
 	#It is much faster to use this in testing than generateWordArray() because most words are not present.
 	dprint ("in generateWordArray() " + path)
 	output = []
@@ -363,7 +364,7 @@ def main():
 	stats = {}
 	for y in lambdas:
 		print "---\n\nComputing stats for lambda: " + str(y)
-		stats[y] = getStats(testingPaths[0:100], vocabmap, Xspam, Xham, isSpam, y)
+		stats[y] = getStats(testingPaths, vocabmap, Xspam, Xham, isSpam, y)
 		print "stats for lambda = " + str(y) + " " + str(stats[y])
 
 	print stats
