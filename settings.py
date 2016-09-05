@@ -1,7 +1,7 @@
 datasetFolder = 'trec06p-cs280/data/'
 outputFolder = 'Output/'
 pathLabels = 'trec06p-cs280/labels'
-filename = 'trec06p-cs280/data/004/269'
+filename = 'trec06p-cs280/data/000/000'
 
 DEBUG = False
 LOAD_VOCAB = True 			#Load previously computed vocabulary data from output.

@@ -6,11 +6,13 @@ import numpy as np 		#numpy has smaller memory footprint than python lists.
 from multiprocessing import Pool
 import itertools
 import time
-import json  
+import json 
+import math 
 
 from settings import *
 
-
+np.set_printoptions(threshold = np.inf)
+old_settings = np.seterr(all='raise')
 currPath =  os.path.dirname(os.path.realpath(__file__))
 
 #isSpam = {}
@@ -76,6 +78,7 @@ def parseWords(msg):
 	for word in words:
 		if CASE_INSENSITIVE: word = word.lower()
 		if len(word) < 20: output.add(word)
+
 	return output
 
 def getWords(path):
@@ -138,7 +141,7 @@ def generateWordArray(path, vocabmap):
 	return output
 
 def generateWordArray_star(a_b):
-	#wrapper for use in multiprocessing
+	#wrapper for using generateWordArray in multiprocessing
 	#convert func([a,b]) to func(a,b) call
 	return generateWordArray(*a_b)
 
@@ -188,9 +191,11 @@ def computeLikelihood(X, vocabmap, Y):
 	#Y is the lambda parameter for Lambda smoothing
 	docsInClass = X.shape[0]	#total number of spam or ham documents in the training set
 	sums = np.sum(X, axis=0)
-	addend = np.ones(len(vocabmap)) * Y
 
-	return 1.0 * (sums+addend) / docsInClass
+	addend = np.ones(len(vocabmap)) * Y
+	output =  1.0 * (sums+addend) / (docsInClass + (Y * len(vocabmap)))
+
+	return output
 
 def computeProbabilities(Xspam, Xham, vocabmap, Y):
 	
@@ -232,9 +237,37 @@ def loadData(filename):
 	vprint("Loaded " + filename)
 	return data
 
-def classifyEmail(wordArray, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H, Y):
+def classifyEmail(wordArray, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H):
 	#given the word Array, probabilities and the lambda, returns True if Spam.
-	 
+	wordArray = wordArray[0]
+
+
+	S_terms = np.ones(len(wordArray))
+	H_terms = np.ones(len(wordArray))
+	for i in range(len(wordArray)):
+		if (wordArray[i]):
+			S_terms[i] = P_x_gvn_S[i]
+			H_terms[i] = P_x_gvn_H[i]
+		else:
+			S_terms[i] = 1 - P_x_gvn_S[i]
+			H_terms[i] = 1 - P_x_gvn_H[i]
+
+
+	partial_S = np.sum(np.log(S_terms)) + math.log(P_w_is_S)
+	partial_H = np.sum(np.log(H_terms)) + math.log(P_w_is_H)
+
+	print math.log(P_w_is_S), math.log(P_w_is_H)
+	print partial_S, partial_H
+
+	prob_S = partial_S - (partial_S + partial_H)  #the formula is subtraction, not division, in log space
+	prob_H = partial_H - (partial_S + partial_H)
+	
+	print prob_S, prob_H
+
+	if prob_S > prob_H:
+		return True
+	else:
+		return False
 def main():
 
 	trainingPaths, testingPaths = generatePaths()			#generate list of paths for training and testing
@@ -261,7 +294,18 @@ def main():
 		Xspam = np.load('Output/Xspam.npy')
 		Xham = np.load('Output/Xham.npy')
 		vprint("Loaded Xspam and Xham")
+	
+	P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, 0.01)
 
-		P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, 0)
+	correct = 0
+	for path in testingPaths [0:20]:
+		print "\n" +path
+		res = classifyEmail(generateWordArray(path, vocabmap), P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H)
+		print res, isSpam[path[-7:]]
+		if res == isSpam[path[-7:]]: correct += 1
+
+
+	print correct
+	
 if __name__ == '__main__':
 	main()
