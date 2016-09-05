@@ -110,14 +110,6 @@ def generateVocabulary(trainingPaths):
 	if MULTIPROCESS:
 		pool = Pool(processes=PROCESSES)
 		results = pool.map(getWords, trainingPaths)
-		'''		p = Pool(processes=4)
-		results = p.map_async(getWords, trainingPaths)
-		p.close() # No more getWords
-		while (True):
-			if (results.ready()): break
-			remaining = results._number_left
-			print ("\rRemaining tasks: " + str(remaining)),
-			time.sleep(0.5)'''
 	else:
 		results= map(getWords, trainingPaths)
 
@@ -138,6 +130,18 @@ def generateWordArray(path, vocabmap):
 		if word in vocabmap:
 			output[0][vocabmap[word]] = True 	#assert the corresponding index of the word in the dictionary
 
+	return output
+
+def generateWordIndexList(path, vocabmap):
+	#generate a list of indices on vocabmap of the words contained in the email.
+	#It is much faster to use this in testing than generateWordArray() because most words are not present.
+	dprint ("in generateWordArray() " + path)
+	output = []
+	#vocablist = list(vocab)
+
+	for word in getWords(path):			
+		if word in vocabmap:
+			output.append(vocabmap[word])
 	return output
 
 def generateWordArray_star(a_b):
@@ -237,37 +241,94 @@ def loadData(filename):
 	vprint("Loaded " + filename)
 	return data
 
-def classifyEmail(wordArray, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H):
+def switchTerm(switch, value):
+	return value if switch else (1-value)
+def switchTerm_star(a_b):
+	return switchTerm(*a_b)
+
+def classifyEmail(wordIndexList, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H):
 	#given the word Array, probabilities and the lambda, returns True if Spam.
-	wordArray = wordArray[0]
+	#wordArray = wordArray[0]
 
 
-	S_terms = np.ones(len(wordArray))
-	H_terms = np.ones(len(wordArray))
-	for i in range(len(wordArray)):
-		if (wordArray[i]):
-			S_terms[i] = P_x_gvn_S[i]
-			H_terms[i] = P_x_gvn_H[i]
-		else:
-			S_terms[i] = 1 - P_x_gvn_S[i]
-			H_terms[i] = 1 - P_x_gvn_H[i]
+	#S_terms = np.ones(len(wordArray))
+	#H_terms = np.ones(len(wordArray))
+	'''for i in range(len(wordArray)):
+					if (wordArray[i]):
+						S_terms[i] = P_x_gvn_S[i]
+						H_terms[i] = P_x_gvn_H[i]
+					else:
+						S_terms[i] = 1 - P_x_gvn_S[i]
+						H_terms[i] = 1 - P_x_gvn_H[i]'''
 
+	#list comprehensions should be faster
+	#S_terms = np.array([P_x_gvn_S[i] if wordArray[i] else (1 - P_x_gvn_S[i]) for i in range(len(wordArray))])
+	#H_terms = np.array([P_x_gvn_H[i] if wordArray[i] else (1 - P_x_gvn_H[i]) for i in range(len(wordArray))])
+
+	#cannot do multiprocessing inside a subprocess
+	'''pool = Pool(processes = 4)
+				S_terms = pool.map(switchTerm_star, itertools.izip(wordArray, P_x_gvn_S))
+				H_terms = pool.map(switchTerm_star, itertools.izip(wordArray, P_x_gvn_H))
+	'''
+
+	S_terms = 1 - P_x_gvn_S
+	H_terms = 1 - P_x_gvn_H
+	for i in wordIndexList:
+		S_terms[i] = P_x_gvn_S[i]
+		H_terms[i] = P_x_gvn_H[i]
 
 	partial_S = np.sum(np.log(S_terms)) + math.log(P_w_is_S)
 	partial_H = np.sum(np.log(H_terms)) + math.log(P_w_is_H)
-
-	print math.log(P_w_is_S), math.log(P_w_is_H)
-	print partial_S, partial_H
-
-	prob_S = partial_S - (partial_S + partial_H)  #the formula is subtraction, not division, in log space
+	prob_S = partial_S - (partial_S + partial_H)  #the formula is subtraction, not division, in log space ?
 	prob_H = partial_H - (partial_S + partial_H)
-	
-	print prob_S, prob_H
 
 	if prob_S > prob_H:
 		return True
 	else:
 		return False
+
+def getStat(path, vocabmap,  P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H, isSpam ):
+	#returns a tuple containing a value(TP, TN, FP, FN)
+	#e.g. for true positive (1,0,0,0)
+	
+	result = classifyEmail(generateWordIndexList(path, vocabmap), P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H)
+	actual = isSpam[path[-7:]]
+
+	case = (result, actual)
+	if case == (1,1):
+		return (1,0,0,0)
+	elif case == (0,0):
+		return (0,1,0,0)
+	elif case == (1,0):
+		return (0,0,1,0)
+	elif case == (0,1):
+		return (0,0,0,1)
+
+def getStat_star(a_b):
+	#wrapper function of getStat(). used for multiprocessing with more than one argument
+	return getStat(*a_b)
+
+def getStats(paths, vocabmap, Xspam, Xham, isSpam, Y):
+
+	P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, Y)
+
+	results = []
+	if MULTIPROCESS:
+		pool = Pool(processes = PROCESSES)
+		it = lambda x: itertools.repeat(x)		#make a wrapper it(x) for itertools.repeat(x)
+		results = pool.map(getStat_star, itertools.izip(paths, it(vocabmap), it(P_w_is_S), it(P_w_is_H), it(P_x_gvn_S), it(P_x_gvn_H), it(isSpam)))
+	else:
+		for path in paths:
+			result = getStat(path, vocabmap, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H, isSpam)
+			results.append(result)
+			print result
+
+	tmp = np.vstack(results)			#concatenate all results
+	stats = np.sum(tmp, axis=0)		#get column sum of the results. this will be an array [TP, TN, FP, FN]
+
+	return stats
+
+
 def main():
 
 	trainingPaths, testingPaths = generatePaths()			#generate list of paths for training and testing
@@ -294,18 +355,25 @@ def main():
 		Xspam = np.load('Output/Xspam.npy')
 		Xham = np.load('Output/Xham.npy')
 		vprint("Loaded Xspam and Xham")
+
 	
-	P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, 0.01)
-
-	correct = 0
-	for path in testingPaths [0:20]:
-		print "\n" +path
-		res = classifyEmail(generateWordArray(path, vocabmap), P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H)
-		print res, isSpam[path[-7:]]
-		if res == isSpam[path[-7:]]: correct += 1
 
 
-	print correct
-	
+	lambdas = [2.0, 1.0, 0.5, 0.1, 0.005]
+	stats = {}
+	for y in lambdas:
+		print "---\n\nComputing stats for lambda: " + str(y)
+		stats[y] = getStats(testingPaths[0:100], vocabmap, Xspam, Xham, isSpam, y)
+		print "stats for lambda = " + str(y) + " " + str(stats[y])
+
+	print stats
+	saveData(str(stats), 'Stats')
+
+	for key in stats.keys():
+		stat = stats[key]
+		precision = float(stat[0]) / (stat[0] + stat[2])
+		recall = float(stat[0]) / (stat[0] + stat[3])
+		print "lambda: " + str(key) + " precision: " + str(precision) + " recall: " + str(recall)
+
 if __name__ == '__main__':
 	main()
