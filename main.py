@@ -15,6 +15,7 @@ np.set_printoptions(threshold = np.inf)
 old_settings = np.seterr(all='raise')
 currPath =  os.path.dirname(os.path.realpath(__file__))
 
+outputcontent = ''
 #isSpam = {}
 #vocab = {}
 #supported_content_types = ['text/plain', 'text/html', 'multipart', 'multipart/alternative']
@@ -22,6 +23,8 @@ def dprint(msg):
 	if DEBUG:
 		print(msg)
 def vprint(msg):
+	global outputcontent
+	outputcontent += str(msg) + '\n'
 	if VERBOSE:
 		print(msg)
 
@@ -63,9 +66,9 @@ def generatePaths():
 				testingPaths.extend([dirpath + '/' + x for x in filenames])
 		except ValueError:
 			pass
-	dprint ("Total Dataset: " + str(len(trainingPaths) + len(testingPaths)))
-	dprint (str(len(trainingPaths)) + " Training Documents")
-	dprint (str(len(testingPaths)) + " Testing Documents")
+	vprint ("Total Dataset: " + str(len(trainingPaths) + len(testingPaths)))
+	vprint (str(len(trainingPaths)) + " Training Documents")
+	vprint (str(len(testingPaths)) + " Testing Documents")
 
 	return (trainingPaths, testingPaths)
 
@@ -79,6 +82,7 @@ def parseWords(msg):
 		if CASE_INSENSITIVE: word = word.lower()
 		if len(word) < 20: output.add(word)
 
+	#print output
 	return output
 
 def getWords(path):
@@ -211,7 +215,7 @@ def computeProbabilities(Xspam, Xham, vocabmap, Y):
 	vprint("Pre-computing Priors...")
 	P_w_is_S = 1.0 * totalSpam / totalDocs
 	P_w_is_H = 1.0 * totalHam / totalDocs
-	vprint("Prior Computed.")
+	vprint("Priors: P(S)="+str(P_w_is_S) + " P(H)=" + str(P_w_is_H))
 
 	vprint("Pre-computing Likelihoods...")
 	P_x_gvn_S = computeLikelihood(Xspam, vocabmap,Y)
@@ -280,8 +284,10 @@ def classifyEmail(wordIndexList, P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H):
 
 	partial_S = np.sum(np.log(S_terms)) + math.log(P_w_is_S)
 	partial_H = np.sum(np.log(H_terms)) + math.log(P_w_is_H)
-	prob_S = partial_S - (partial_S + partial_H)  #the formula is subtraction, not division, in log space ?
-	prob_H = partial_H - (partial_S + partial_H)
+	prob_S = partial_S# - (partial_S + partial_H)  #the formula is subtraction, not division, in log space ?
+	prob_H = partial_H# - (partial_S + partial_H)
+	#prob_S = math.exp(partial_S) / (math.exp(partial_S) + math.exp(partial_H))
+	#prob_H = math.exp(partial_H) / (math.exp(partial_S) + math.exp(partial_H))
 
 	if prob_S > prob_H:
 		return True
@@ -312,7 +318,7 @@ def getStat_star(a_b):
 def getStats(paths, vocabmap, Xspam, Xham, isSpam, Y):
 
 	P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, Y)
-
+	vprint("Classifying Emails...")
 	results = []
 	if MULTIPROCESS:
 		pool = Pool(processes = PROCESSES)
@@ -329,6 +335,32 @@ def getStats(paths, vocabmap, Xspam, Xham, isSpam, Y):
 
 	return stats
 
+def getTop200Words(vocablist, vocabmap, Xspam, Xham):
+	#returns a list of the top 200 most influencial words
+	spams = np.sum(Xspam, axis=0)	#returns a numpy array of all the 
+	hams = np.sum(Xham, axis=0)
+	difference = np.abs(spams-hams)
+	top200 = []
+	sortedindices = difference.argsort();
+	for i in reversed(range(len(sortedindices)-200, len(sortedindices))):
+		top200.append(sortedindices[i])
+
+	for i in top200:
+		print vocablist[i], [i],spams[i], hams[i]
+
+	return top200
+
+def getInfrequentWords(vocablist, vocabmap, Xspam, Xham, threshold=3):
+	#returns the set of words that occured less than the threshold
+	output = set()
+	sums = np.sum(Xspam, axis=0) + np.sum(Xham, axis=0)
+	
+	for i in range(len(sums)):
+		if sums[i] <= threshold:
+			output.add(vocablist[i])
+	
+	return output
+
 
 def main():
 
@@ -342,9 +374,12 @@ def main():
 		vocabmap = {}
 		for index, word in enumerate(vocab):					
 			vocabmap[word] = index
-		saveData(vocabmap, 'vocabmap')
+		if SAVE_VOCAB:
+			saveData(vocabmap, 'vocabmap')
+			saveData(list(vocab), 'vocablist')
 	else:
 		vocabmap = loadData('Output/vocabmap.json')
+		vocab = set(loadData('Output/vocablist.json'))
 
 	if not LOAD_X_DATA:
 		Xspam, Xham = buildTrainingMatrices(trainingPaths, isSpam, vocabmap)
@@ -357,16 +392,26 @@ def main():
 		Xham = np.load('Output/Xham.npy')
 		vprint("Loaded Xspam and Xham")
 
-	
+	#infrequent = getInfrequentWords(list(vocab), vocabmap, Xspam, Xham)
+	#print vocab - infrequent
 
+
+	#top200 = getTop200Words(list(vocab), vocabmap, Xspam, Xham)
+	#for i in top200:
+	#	print list(vocab)[i] + " " + str(np.sum(Xspam, axis=0)[i]) + " " + str(np.sum(Xham, axis=0)[i])
 
 	lambdas = [2.0, 1.0, 0.5, 0.1, 0.005]
 	stats = {}
 	for y in lambdas:
-		print "---\n\nComputing stats for lambda: " + str(y)
+		vprint ("---\n\nComputing stats for lambda: " + str(y))
 		stats[y] = getStats(testingPaths, vocabmap, Xspam, Xham, isSpam, y)
-		print "stats for lambda = " + str(y) + " " + str(stats[y])
+		tmp = stats[y]
+		vprint("stats for lambda = " + str(y) + " " + str(stats[y]))
+		vprint("precision = " + str(float(tmp[0]) / (tmp[0] + tmp[2]) ))
+		vprint("recall = " + str(float(tmp[0]) / (tmp[0] + tmp[3])))
+		vprint("accuracy = " + str(float(tmp[0]+tmp[1])/(tmp[2]+tmp[3])))
 
+	print "---\n\n"
 	print stats
 	saveData(str(stats), 'Stats')
 
@@ -374,7 +419,12 @@ def main():
 		stat = stats[key]
 		precision = float(stat[0]) / (stat[0] + stat[2])
 		recall = float(stat[0]) / (stat[0] + stat[3])
-		print "lambda: " + str(key) + " precision: " + str(precision) + " recall: " + str(recall)
+		vprint ("lambda: " + str(key) + " precision: " + str(precision) + " recall: " + str(recall))
+
+
+	with open('Output/printedoutput.txt', 'w') as f:
+		f.write(outputcontent)
+
 
 if __name__ == '__main__':
 	main()
