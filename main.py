@@ -41,6 +41,8 @@ def cleanMessage(raw_html):
 	if REMOVE_HTML: tmp = re.sub('<[^>]*>','', tmp)							#strip all html tags including nested tags
 
 	return re.sub('\&.*\;', '', tmp)				#strip all special html characters like &nbsp;
+	#return re.sub('[^A-Za-z\s]+', '', tmp)		#return only the characters and spaces.
+
 
 def getEmailBody(fn):
 	with open(fn) as f:
@@ -84,6 +86,7 @@ def parseWords(msg):
 
 	#print output
 	return output
+
 
 def getWords(path):
 	dprint("current progress: " + path)
@@ -350,6 +353,25 @@ def getTop200Words(vocablist, vocabmap, Xspam, Xham):
 
 	return top200
 
+def getTop200(vocablist, MI, Xspam, Xham):
+
+	spams = np.sum(Xspam, axis=0)	#returns a numpy array of all the 
+	hams = np.sum(Xham, axis=0)
+
+	top200 = []
+	top200words = set()
+	print "shape of MI", MI.shape
+	sortedindices = MI.argsort();
+
+	for i in reversed(range(len(sortedindices)-200, len(sortedindices))):
+	#for i in range(200):
+		top200.append(sortedindices[i])
+		top200words.add(vocablist[sortedindices[i]])
+	for i in top200:
+		print [i], vocablist[i], spams[i], hams[i]
+
+	return top200words
+
 def getInfrequentWords(vocablist, vocabmap, Xspam, Xham, threshold=3):
 	#returns the set of words that occured less than the threshold
 	output = set()
@@ -361,6 +383,146 @@ def getInfrequentWords(vocablist, vocabmap, Xspam, Xham, threshold=3):
 	
 	return output
 
+def myTop200Words(vocablist, vocabmap, Xspam, Xham):
+	spams = np.sum(Xspam, axis=0).astype(float)	#returns a numpy array of all the 
+	hams = np.sum(Xham, axis=0).astype(float)
+
+	#padd the spams and hams with the value 1
+	for i in range(len(spams)):
+		if spams[i] == 0: spams[i] = 1.0
+		if hams[i] == 0: hams[i] = 1.0
+
+	#get the max(spams/hams, hams/spams)
+	ranks = np.divide(spams, hams)
+	for i, value in enumerate(ranks):
+		if value < 1:
+			ranks[i] = 1.0 / value
+
+	#assign a weight for the quotient and a weight for the total number of words
+	ranks = 0.8 * ranks + 0.2 * (spams + hams)
+
+	sortedIndices = ranks.argsort()
+	output = set()
+	for i in reversed(range(len(sortedIndices)-200, len(sortedIndices))):
+		index = sortedIndices[i]
+		output.add(vocablist[index])
+		print vocablist[index], spams[index], hams[index], ranks[index]
+
+	return output
+
+def top200_percentageDifference(vocablist, vocabmap, Xspam, Xham):
+	spams = np.sum(Xspam, axis=0).astype(float)	#returns a numpy array of all the 
+	hams = np.sum(Xham, axis=0).astype(float)
+	sums = spams + hams
+	pdiffs = np.abs(spams - hams) / ((spams + hams)/2)
+
+	maxval = np.amax(sums)
+	probs = sums / maxval
+
+	ranks = np.multiply(1000*pdiffs, probs)
+
+	sortedIndices = ranks.argsort()
+	output = set()
+	for i in reversed(range(len(sortedIndices)-200, len(sortedIndices))):
+		index = sortedIndices[i]
+		output.add(vocablist[index])
+		print vocablist[index], spams[index], hams[index], ranks[index]
+
+	return output
+
+
+def top200_likelihoods(vocablist, vocabmap, Xspam, Xham, Y=2.0):
+	totalSpam = Xspam.shape[0] 		#total number of spam documents in training set
+	totalHam = Xham.shape[0]		#total number of ham documents in training set
+	totalDocs = totalSpam + totalHam
+	spams = np.sum(Xspam, axis=0).astype(float)	#returns a numpy array of all the 
+	hams = np.sum(Xham, axis=0).astype(float)
+
+	P_w_is_S, P_w_is_H, P_x_gvn_S, P_x_gvn_H = computeProbabilities(Xspam, Xham, vocabmap, Y)
+
+	sortedIndices = P_x_gvn_S.argsort()
+	output = set()
+	print"sorted by P(x|S)"
+	for i in range(len(P_x_gvn_S)):#reversed(range(len(sortedIndices)-200, len(sortedIndices))):
+		index = sortedIndices[i]
+		output.add(vocablist[index])
+		print vocablist[index], spams[index], hams[index], P_x_gvn_S[index]
+
+	return output
+
+def getFrequentWords(vocablist, vocabmap, Xspam, Xham, amount=200):
+	output = set()
+	spams = np.sum(Xspam, axis=0)
+	hams = np.sum(Xham, axis=0)
+	sums = spams + hams
+
+	sortedindices = sums.argsort()
+	for i in reversed(range(len(sortedindices)-amount, len(sortedindices))):
+		index = sortedindices[i]
+		output.add(vocablist[index])
+		print vocablist[index], spams[index], hams[index]
+
+
+	return output
+
+def mutualInformation(vocabmap, Xspam, Xham, Y):
+	totalSpam = Xspam.shape[0] 		#total number of spam documents in training set
+	totalHam = Xham.shape[0]		#total number of ham documents in training set
+	totalDocs = totalSpam + totalHam
+
+	#P(c=S) and P(c=W)	scalar
+	P_c_S = 1.0 * totalSpam / totalDocs
+	P_c_H = 1.0 * totalHam / totalDocs
+
+	#P(ft=1) and P(ft=0) array
+	P_w_1 = (1.0 * (np.sum(Xspam, axis=0)+np.sum(Xham, axis=0))) / totalDocs
+	P_w_0 = 1 - P_w_1
+
+	#P(c,ft)
+	P_S_1 = np.sum(Xspam, axis=0) + Y / (float(totalDocs) + Y *len(vocabmap))
+	P_S_0 = (totalSpam - np.sum(Xspam, axis=0) - Y) / (float(totalDocs) + Y * len(vocabmap))
+	P_H_1 = np.sum(Xham, axis=0) + Y / (float(totalDocs) + Y*len(vocabmap))
+	P_H_0 = (totalHam - np.sum(Xham, axis=0) - Y) / (float(totalDocs) + Y * len(vocabmap))
+
+
+	#c=S, ft=1
+	tmp = np.log(P_S_1) - np.log(P_c_S *(P_w_1))
+	output = np.multiply(P_S_1, tmp)
+
+	#c=S, ft = 0
+	tmp = np.log(P_S_0) - np.log(P_c_S * P_w_0)
+	output += np.multiply(P_S_0, tmp)
+
+	#c=H, ft=1
+	tmp = np.log(P_H_1) - np.log(P_c_H * P_w_1)
+	output += np.multiply(P_H_1, tmp)
+
+	#c=H, ft=0
+	tmp = np.log(P_H_0) - np.log(P_c_H * P_w_0)
+	output += np.multiply(P_H_0, tmp)
+
+	return output
+
+def runExperiment(lambdas, testingPaths, vocabmap, Xspam, Xham, isSpam):
+	stats = {}
+	for y in lambdas:
+		vprint ("---\n\nComputing stats for lambda: " + str(y))
+		stats[y] = getStats(testingPaths, vocabmap, Xspam, Xham, isSpam, y)
+		tmp = stats[y]
+		vprint("stats for lambda = " + str(y) + " " + str(stats[y]))
+		vprint("precision = " + str(float(tmp[0]) / (tmp[0] + tmp[2]) ))
+		vprint("recall = " + str(float(tmp[0]) / (tmp[0] + tmp[3])))
+		vprint("accuracy = " + str(float(tmp[0]+tmp[1])/(tmp[2]+tmp[3]+tmp[0]+tmp[1])))
+	return stats
+
+def displayStats(stats):
+	for key in stats.keys():
+		stat = stats[key]
+		precision = float(stat[0]) / (stat[0] + stat[2])
+		recall = float(stat[0]) / (stat[0] + stat[3])
+		accuracy = float(stat[0] + stat[1]) / (stat[2] + stat[3] + stat[0] + stat[1])
+		vprint ("lambda: " + str(key) + " precision: " + str(precision) + " recall: " + str(recall) + "accuracy: " + str(accuracy))
+
 
 def main():
 
@@ -370,16 +532,20 @@ def main():
 
 	if not LOAD_VOCAB:
 		vocab = generateVocabulary(trainingPaths)
+		vocablist = list(vocab)
 		#build a hashmap for lookup of the index of the word in the vocabulary
 		vocabmap = {}
 		for index, word in enumerate(vocab):					
 			vocabmap[word] = index
 		if SAVE_VOCAB:
 			saveData(vocabmap, 'vocabmap')
-			saveData(list(vocab), 'vocablist')
+			saveData(vocablist, 'vocablist')
 	else:
 		vocabmap = loadData('Output/vocabmap.json')
-		vocab = set(loadData('Output/vocablist.json'))
+		vocablist = loadData('Output/vocablist.json')
+		vocab = set(vocablist)
+
+	print len(vocab)
 
 	if not LOAD_X_DATA:
 		Xspam, Xham = buildTrainingMatrices(trainingPaths, isSpam, vocabmap)
@@ -392,6 +558,8 @@ def main():
 		Xham = np.load('Output/Xham.npy')
 		vprint("Loaded Xspam and Xham")
 
+	
+
 	#infrequent = getInfrequentWords(list(vocab), vocabmap, Xspam, Xham)
 	#print vocab - infrequent
 
@@ -400,27 +568,68 @@ def main():
 	#for i in top200:
 	#	print list(vocab)[i] + " " + str(np.sum(Xspam, axis=0)[i]) + " " + str(np.sum(Xham, axis=0)[i])
 
+	
+
 	lambdas = [2.0, 1.0, 0.5, 0.1, 0.005]
 	stats = {}
-	for y in lambdas:
-		vprint ("---\n\nComputing stats for lambda: " + str(y))
-		stats[y] = getStats(testingPaths, vocabmap, Xspam, Xham, isSpam, y)
-		tmp = stats[y]
-		vprint("stats for lambda = " + str(y) + " " + str(stats[y]))
-		vprint("precision = " + str(float(tmp[0]) / (tmp[0] + tmp[2]) ))
-		vprint("recall = " + str(float(tmp[0]) / (tmp[0] + tmp[3])))
-		vprint("accuracy = " + str(float(tmp[0]+tmp[1])/(tmp[2]+tmp[3])))
+	#stats = runExperiment(lambdas, testingPaths, vocabmap, Xspam, Xham, isSpam)
+	#displayStats(stats)
 
-	print "---\n\n"
-	print stats
+	print "reducing vocab"
+	infrequent = getInfrequentWords(vocablist, vocabmap, Xspam, Xham, threshold=3)
+	frequent = getFrequentWords(vocablist, vocabmap, Xspam, Xham, amount=200)
+	print frequent
+	newvocab = (vocab - infrequent - frequent)
+	#newvocab = vocab - infrequent
+	newvocablist= list(newvocab)
+	newvocabmap = {}
+	for index, word in enumerate(newvocab):					
+		newvocabmap[word] = index
+	print "vocabreduced to ", len(newvocabmap)
+
+	print "computing new X data"
+	newXspam, newXham = buildTrainingMatrices(trainingPaths, isSpam, newvocabmap)
+	print "X data done"
+		#MI = mutualInformation(newvocabmap, newXspam, newXham, 2.0)
+	
+	#runExperiment(lambdas, testingPaths, newvocabmap, newXspam, newXham, isSpam)
+	#top200_likelihoods(vocablist, vocabmap, Xspam, Xham)
+	'''print "before reducing>>>"
+				myTop200Words(vocablist, vocabmap, Xspam, Xham)
+				print "after reducing>>>"
+				myTop200Words(newvocablist, newvocabmap, newXspam, newXham)
+			'''
+	print "percentagedifference:>>>"
+	finalvocab = top200_percentageDifference(newvocablist, newvocabmap, newXspam, newXham)
+	finalvocablist = list(finalvocab)
+	finalvocabmap = {}
+	for index, word in enumerate(finalvocab):
+		finalvocabmap[word] = index
+
+	print len(finalvocab)
+
+	print "computing X data"
+	finalXspam, finalXham = buildTrainingMatrices(trainingPaths, isSpam, finalvocabmap)
+	print "done"
+
+	runExperiment(lambdas, testingPaths, finalvocabmap, finalXspam, finalXham, isSpam)
+
+	'''
+	print "getting top 200 words using MI"
+	top200vocab = getTop200( list(newvocab), MI, newXspam, newXham)
+	top200vocabmap = {}
+	for index, word in enumerate(top200vocab):					
+		top200vocabmap[word] = index
+	print "computing new X data"
+	top200Xspam, top200Xham = buildTrainingMatrices(trainingPaths, isSpam, top200vocabmap)
+	print "X data done"
+
+	#runExperiment(lambdas, testingPaths, top200vocabmap, top200Xspam, top200Xham, isSpam)
+
+
+	'''
+	
 	saveData(str(stats), 'Stats')
-
-	for key in stats.keys():
-		stat = stats[key]
-		precision = float(stat[0]) / (stat[0] + stat[2])
-		recall = float(stat[0]) / (stat[0] + stat[3])
-		vprint ("lambda: " + str(key) + " precision: " + str(precision) + " recall: " + str(recall))
-
 
 	with open('Output/printedoutput.txt', 'w') as f:
 		f.write(outputcontent)
